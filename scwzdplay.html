@@ -857,10 +857,9 @@
     </div>
 
     <script>
-        // 설정: 구글드라이브 JSON 리더보드 URL
-        // 구글드라이브에 leaderboard.json 파일을 공개로 올린 후, 아래 URL을 수정하세요
-        // 형식: https://drive.google.com/uc?id=YOUR_FILE_ID&export=download
-        const SHARED_LEADERBOARD_URL = 'https://github.com/Zykylscwizard/leaderboard.json'; // 구글드라이브 공개 링크를 여기에 입력
+        // 설정: 공유 리더보드 JSON URL
+        // github.com 페이지 주소가 아니라 raw.githubusercontent.com 의 원본(raw) 주소여야 JSON을 읽을 수 있습니다.
+        const SHARED_LEADERBOARD_URL = 'https://raw.githubusercontent.com/Zykyl/scwizard/main/leaderboard.json';
 
         // 게임 데이터
         const stages = [
@@ -1230,7 +1229,7 @@
             attempts: {} // 도전 시도 횟수
         };
 
-        let localLeaderboard = JSON.parse(localStorage.getItem('supercomLeaderboard')) || [];
+        let localLeaderboard = (() => { try { const d = JSON.parse(localStorage.getItem('supercomLeaderboard')); return Array.isArray(d) ? d : []; } catch (e) { return []; } })();
         let sharedLeaderboard = [];
 
         // 게임 객체
@@ -1242,7 +1241,9 @@
                 }
 
                 try {
-                    const response = await fetch(SHARED_LEADERBOARD_URL);
+                    // 캐시된 예전 파일이 아닌 최신 파일을 받도록 쿼리 추가
+                    const url = SHARED_LEADERBOARD_URL + (SHARED_LEADERBOARD_URL.includes('?') ? '&' : '?') + 't=' + Date.now();
+                    const response = await fetch(url, { cache: 'no-store' });
                     if (response.ok) {
                         const data = await response.json();
                         return Array.isArray(data) ? data : [];
@@ -1253,38 +1254,59 @@
                 return [];
             },
 
-            // 초기 리더보드 로드 (게임 시작 전)
-            loadInitialLeaderboard() {
-                const leaderboardData = [
-                    { nickname: "병렬처리 전사", score: 285, level: 4, time: 1245 },
-                    { nickname: "슈퍼 마법사", score: 268, level: 4, time: 1482 },
-                    { nickname: "HPC 박사", score: 251, level: 3, time: 1876 },
-                    { nickname: "빠른 계산기", score: 239, level: 3, time: 2103 },
-                    { nickname: "클러스터 마스터", score: 218, level: 3, time: 2341 }
-                ];
+            // HTML 이스케이프 (닉네임에 태그가 들어가도 화면이 깨지지 않도록)
+            escapeHtml(str) {
+                return String(str ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+            },
 
+            // 로컬 + 공유 기록 합치기 (같은 기록 중복 제거)
+            mergeLeaderboards(...boards) {
+                const seen = new Set();
+                const merged = [];
+                boards.flat().forEach(p => {
+                    if (!p || typeof p.score !== 'number') return;
+                    const key = `${p.nickname}|${p.score}|${Math.round(p.time || 0)}`;
+                    if (seen.has(key)) return;
+                    seen.add(key);
+                    merged.push(p);
+                });
+                return merged.sort((a, b) => b.score - a.score || (a.time || 0) - (b.time || 0));
+            },
+
+            // 초기 리더보드 로드 (게임 시작 전) - 실제 로컬/공유 기록으로 갱신
+            async loadInitialLeaderboard() {
                 const leaderboardBody = document.getElementById('initialLeaderboardBody');
                 if (!leaderboardBody) return;
 
-                let html = '';
-                leaderboardData.forEach((player, idx) => {
-                    const rankNum = idx + 1;
-                    let rankClass = '';
-                    if (rankNum === 1) rankClass = 'rank-1';
-                    else if (rankNum === 2) rankClass = 'rank-2';
-                    else if (rankNum === 3) rankClass = 'rank-3';
+                // 공유 기록을 받기 전에 로컬 기록부터 먼저 표시
+                const render = (data) => {
+                    if (data.length === 0) {
+                        leaderboardBody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #999;">아직 기록이 없습니다.</td></tr>`;
+                        return;
+                    }
+                    let html = '';
+                    data.slice(0, 5).forEach((player, idx) => {
+                        const rankNum = idx + 1;
+                        let rankClass = '';
+                        if (rankNum === 1) rankClass = 'rank-1';
+                        else if (rankNum === 2) rankClass = 'rank-2';
+                        else if (rankNum === 3) rankClass = 'rank-3';
 
-                    html += `
-                        <tr>
-                            <td><span class="rank-badge ${rankClass}">${rankNum}</span></td>
-                            <td><strong>${player.nickname}</strong></td>
-                            <td>${player.score} 점</td>
-                            <td>Lv.${player.level}</td>
-                        </tr>
-                    `;
-                });
+                        html += `
+                            <tr>
+                                <td><span class="rank-badge ${rankClass}">${rankNum}</span></td>
+                                <td><strong>${this.escapeHtml(player.nickname)}</strong></td>
+                                <td>${player.score} 점</td>
+                                <td>Lv.${player.level}</td>
+                            </tr>
+                        `;
+                    });
+                    leaderboardBody.innerHTML = html;
+                };
 
-                leaderboardBody.innerHTML = html;
+                render(this.mergeLeaderboards(localLeaderboard, sharedLeaderboard));
+                sharedLeaderboard = await this.loadSharedLeaderboard();
+                render(this.mergeLeaderboards(localLeaderboard, sharedLeaderboard));
             },
 
             startGameWithNickname() {
@@ -1583,8 +1605,7 @@
                 sharedLeaderboard = await this.loadSharedLeaderboard();
 
                 // 로컬과 공유 리더보드 합치기
-                const allLeaderboard = [...localLeaderboard, ...sharedLeaderboard];
-                const sortedBoard = allLeaderboard.slice().sort((a, b) => b.score - a.score).slice(0, 10);
+                const sortedBoard = this.mergeLeaderboards(localLeaderboard, sharedLeaderboard).slice(0, 10);
 
                 let html = `
                     <div class="leaderboard-screen">
@@ -1601,16 +1622,16 @@
                 html += this.generateLeaderboardTable(sortedBoard, 'combined');
 
                 // 로컬 리더보드
-                const sortedLocal = localLeaderboard.slice().sort((a, b) => b.score - a.score).slice(0, 10);
+                const sortedLocal = this.mergeLeaderboards(localLeaderboard).slice(0, 10);
                 html += this.generateLeaderboardTable(sortedLocal, 'local', true);
 
                 // 공유 리더보드
-                const sortedShared = sharedLeaderboard.slice().sort((a, b) => b.score - a.score).slice(0, 10);
+                const sortedShared = this.mergeLeaderboards(sharedLeaderboard).slice(0, 10);
                 html += this.generateLeaderboardTable(sortedShared, 'shared', true);
 
                 html += `
                         </div>
-                        ${sharedLeaderboard.length === 0 ? '<div class="leaderboard-info">💡 구글드라이브 공개 리더보드가 아직 연결되지 않았습니다.</div>' : ''}
+                        ${sharedLeaderboard.length === 0 ? '<div class="leaderboard-info">💡 공유 리더보드를 불러오지 못했습니다.</div>' : ''}
                         <button class="btn-secondary" onclick="document.getElementById('leaderboardModal').classList.remove('active')" style="width: 100%; margin-top: 20px;">닫기</button>
                     </div>
                 `;
@@ -1635,7 +1656,7 @@
                         html += `
                             <tr class="${rankClass}">
                                 <td><span class="rank-medal"></span> ${idx + 1}</td>
-                                <td><span class="player-name">${player.nickname}</span></td>
+                                <td><span class="player-name">${this.escapeHtml(player.nickname)}</span></td>
                                 <td><span class="score-value">${player.score}</span></td>
                                 <td><span class="time-value">${Math.round(player.time)}초</span></td>
                             </tr>
@@ -1669,15 +1690,14 @@
 
                 // 공유 리더보드도 로드해서 순위 계산
                 sharedLeaderboard = await this.loadSharedLeaderboard();
-                const allLeaderboard = [...localLeaderboard, ...sharedLeaderboard];
-                const sortedBoard = allLeaderboard.slice().sort((a, b) => b.score - a.score);
-                const myRank = sortedBoard.findIndex(p => p.nickname === gameState.nickname && p.score === gameState.totalPoints) + 1;
+                const sortedBoard = this.mergeLeaderboards(localLeaderboard, sharedLeaderboard);
+                const myRank = sortedBoard.indexOf(newEntry) + 1;
 
                 const endingContent = `
                     <div class="ending-screen">
                         <div class="master-title">🌟 슈퍼컴 마법사 탄생! 🌟</div>
                         <p style="color: #555; font-size: 1.1em; margin: 20px 0;">
-                            축하합니다, ${gameState.nickname}님!
+                            축하합니다, ${this.escapeHtml(gameState.nickname)}님!
                         </p>
 
                         <div class="achievement-grid">
@@ -1751,15 +1771,8 @@
         };
 
         // 페이지 로드 시 초기 리더보드 표시
-        document.addEventListener('DOMContentLoaded', function() {
-            game.loadInitialLeaderboard();
-        });
-
-        // 혹은 즉시 실행 (DOMContentLoaded 이전)
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', function() {
-                game.loadInitialLeaderboard();
-            });
+            document.addEventListener('DOMContentLoaded', () => game.loadInitialLeaderboard());
         } else {
             game.loadInitialLeaderboard();
         }
