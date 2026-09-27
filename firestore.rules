@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 공유 리더보드: 누구나 읽기 가능, 새 기록 등록만 허용 (수정/삭제 불가)
+    match /leaderboard/{entryId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasOnly(['nickname', 'score', 'level', 'time', 'date', 'createdAt'])
+        && request.resource.data.nickname is string
+        && request.resource.data.nickname.size() > 0
+        && request.resource.data.nickname.size() <= 20
+        && request.resource.data.score is int
+        && request.resource.data.score >= 0
+        && request.resource.data.score <= 1000
+        && request.resource.data.level is int
+        && request.resource.data.level >= 1
+        && request.resource.data.level <= 20
+        && request.resource.data.time is number
+        && request.resource.data.time >= 0
+        && request.resource.data.date is string
+        && request.resource.data.date.size() <= 40
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}

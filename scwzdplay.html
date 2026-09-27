@@ -859,7 +859,23 @@
     <script>
         // 설정: 공유 리더보드 JSON URL
         // github.com 페이지 주소가 아니라 raw.githubusercontent.com 의 원본(raw) 주소여야 JSON을 읽을 수 있습니다.
+        // Firebase 설정이 비어 있으면 아래 JSON 파일을 읽기 전용 공유 리더보드로 사용합니다.
         const SHARED_LEADERBOARD_URL = 'https://raw.githubusercontent.com/Zykyl/scwizard/main/leaderboard.json';
+
+        // 설정: Firebase 실시간 공유 리더보드 (Cloud Firestore)
+        // Firebase 콘솔 > 프로젝트 설정 > 내 앱(웹) 에서 firebaseConfig 값을 복사해 넣으세요.
+        // 이 값은 공개되어도 되는 값이며, 쓰기 권한은 firestore.rules 보안 규칙으로 제한합니다.
+        const FIREBASE_CONFIG = {
+            apiKey: '',
+            authDomain: '',
+            projectId: '',
+            storageBucket: '',
+            messagingSenderId: '',
+            appId: ''
+        };
+        const FIREBASE_COLLECTION = 'leaderboard';
+        const FIREBASE_SDK_VERSION = '10.12.2';
+        const FIREBASE_ENABLED = Boolean(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId);
 
         // 게임 데이터
         const stages = [
@@ -1234,11 +1250,65 @@
 
         // 게임 객체
         const game = {
+            firebase: null,          // { db, fs } - 초기화 후 채워짐
+            liveReady: null,         // 첫 실시간 스냅샷을 기다리는 Promise
+            leaderboardTab: 'combined',
+
+            // Firebase SDK를 필요할 때 불러와 초기화
+            async initFirebase() {
+                if (!FIREBASE_ENABLED) return null;
+                if (this.firebase) return this.firebase;
+                const base = `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}`;
+                const [{ initializeApp }, fs] = await Promise.all([
+                    import(`${base}/firebase-app.js`),
+                    import(`${base}/firebase-firestore.js`)
+                ]);
+                const app = initializeApp(FIREBASE_CONFIG);
+                this.firebase = { db: fs.getFirestore(app), fs };
+                return this.firebase;
+            },
+
+            // Firestore 문서를 화면용 기록으로 정리 (잘못된 값 차단)
+            normalizeEntry(d) {
+                if (!d || typeof d.score !== 'number') return null;
+                return {
+                    nickname: String(d.nickname ?? '').slice(0, 20),
+                    score: d.score,
+                    level: Number(d.level) || 1,
+                    time: Number(d.time) || 0,
+                    date: String(d.date ?? '')
+                };
+            },
+
+            // 실시간 리더보드 구독: 누가 기록을 올리면 즉시 화면이 갱신됨
+            startLiveLeaderboard() {
+                if (this.liveReady) return this.liveReady;
+                this.liveReady = new Promise(resolve => {
+                    this.initFirebase().then(({ db, fs }) => {
+                        const q = fs.query(fs.collection(db, FIREBASE_COLLECTION), fs.orderBy('score', 'desc'), fs.limit(100));
+                        fs.onSnapshot(q, snap => {
+                            sharedLeaderboard = snap.docs.map(doc => this.normalizeEntry(doc.data())).filter(Boolean);
+                            this.refreshLeaderboardViews();
+                            resolve();
+                        }, error => {
+                            console.log('실시간 리더보드 구독 실패:', error);
+                            resolve();
+                        });
+                    }).catch(error => {
+                        console.log('Firebase 초기화 실패:', error);
+                        resolve();
+                    });
+                });
+                return this.liveReady;
+            },
+
             async loadSharedLeaderboard() {
-                if (!SHARED_LEADERBOARD_URL) {
-                    console.log('구글드라이브 URL이 설정되지 않았습니다.');
-                    return [];
+                if (FIREBASE_ENABLED) {
+                    await this.startLiveLeaderboard();
+                    return sharedLeaderboard;
                 }
+
+                if (!SHARED_LEADERBOARD_URL) return [];
 
                 try {
                     // 캐시된 예전 파일이 아닌 최신 파일을 받도록 쿼리 추가
@@ -1246,12 +1316,40 @@
                     const response = await fetch(url, { cache: 'no-store' });
                     if (response.ok) {
                         const data = await response.json();
-                        return Array.isArray(data) ? data : [];
+                        return Array.isArray(data) ? data.map(d => this.normalizeEntry(d)).filter(Boolean) : [];
                     }
                 } catch (error) {
                     console.log('공유 리더보드 로드 실패:', error);
                 }
                 return [];
+            },
+
+            // 게임 기록을 Firebase 공유 리더보드에 등록
+            async submitScore(entry) {
+                if (!FIREBASE_ENABLED) return false;
+                try {
+                    const { db, fs } = await this.initFirebase();
+                    await fs.addDoc(fs.collection(db, FIREBASE_COLLECTION), {
+                        nickname: entry.nickname,
+                        score: entry.score,
+                        level: entry.level,
+                        time: entry.time,
+                        date: entry.date,
+                        createdAt: fs.serverTimestamp()
+                    });
+                    return true;
+                } catch (error) {
+                    console.log('공유 리더보드 등록 실패:', error);
+                    return false;
+                }
+            },
+
+            // 열려 있는 순위표를 최신 데이터로 다시 그림
+            refreshLeaderboardViews() {
+                this.loadInitialLeaderboard(false);
+                if (document.getElementById('leaderboardModal')?.classList.contains('active')) {
+                    this.renderLeaderboardModal();
+                }
             },
 
             // HTML 이스케이프 (닉네임에 태그가 들어가도 화면이 깨지지 않도록)
@@ -1274,7 +1372,7 @@
             },
 
             // 초기 리더보드 로드 (게임 시작 전) - 실제 로컬/공유 기록으로 갱신
-            async loadInitialLeaderboard() {
+            async loadInitialLeaderboard(fetchShared = true) {
                 const leaderboardBody = document.getElementById('initialLeaderboardBody');
                 if (!leaderboardBody) return;
 
@@ -1305,6 +1403,7 @@
                 };
 
                 render(this.mergeLeaderboards(localLeaderboard, sharedLeaderboard));
+                if (!fetchShared) return;
                 sharedLeaderboard = await this.loadSharedLeaderboard();
                 render(this.mergeLeaderboards(localLeaderboard, sharedLeaderboard));
             },
@@ -1599,10 +1698,16 @@
             },
 
             async showLeaderboard() {
-                const leaderboardContent = document.getElementById('leaderboardContent');
-
                 // 공유 리더보드 로드
                 sharedLeaderboard = await this.loadSharedLeaderboard();
+                this.leaderboardTab = 'combined';
+                this.renderLeaderboardModal();
+                document.getElementById('leaderboardModal').classList.add('active');
+            },
+
+            renderLeaderboardModal() {
+                const leaderboardContent = document.getElementById('leaderboardContent');
+                const tab = this.leaderboardTab;
 
                 // 로컬과 공유 리더보드 합치기
                 const sortedBoard = this.mergeLeaderboards(localLeaderboard, sharedLeaderboard).slice(0, 10);
@@ -1611,33 +1716,33 @@
                     <div class="leaderboard-screen">
                         <div class="leaderboard-title">🏆 리더보드 🏆</div>
                         <div class="leaderboard-tabs">
-                            <button class="tab-btn active" onclick="game.switchLeaderboardTab('combined')">전체</button>
-                            <button class="tab-btn" onclick="game.switchLeaderboardTab('local')">로컬</button>
-                            <button class="tab-btn" onclick="game.switchLeaderboardTab('shared')">공유</button>
+                            <button class="tab-btn ${tab === 'combined' ? 'active' : ''}" data-tab="combined" onclick="game.switchLeaderboardTab('combined')">전체</button>
+                            <button class="tab-btn ${tab === 'local' ? 'active' : ''}" data-tab="local" onclick="game.switchLeaderboardTab('local')">로컬</button>
+                            <button class="tab-btn ${tab === 'shared' ? 'active' : ''}" data-tab="shared" onclick="game.switchLeaderboardTab('shared')">공유</button>
                         </div>
                         <div id="leaderboardTableContainer">
                 `;
 
                 // 전체 리더보드
-                html += this.generateLeaderboardTable(sortedBoard, 'combined');
+                html += this.generateLeaderboardTable(sortedBoard, 'combined', tab !== 'combined');
 
                 // 로컬 리더보드
                 const sortedLocal = this.mergeLeaderboards(localLeaderboard).slice(0, 10);
-                html += this.generateLeaderboardTable(sortedLocal, 'local', true);
+                html += this.generateLeaderboardTable(sortedLocal, 'local', tab !== 'local');
 
                 // 공유 리더보드
                 const sortedShared = this.mergeLeaderboards(sharedLeaderboard).slice(0, 10);
-                html += this.generateLeaderboardTable(sortedShared, 'shared', true);
+                html += this.generateLeaderboardTable(sortedShared, 'shared', tab !== 'shared');
 
                 html += `
                         </div>
-                        ${sharedLeaderboard.length === 0 ? '<div class="leaderboard-info">💡 공유 리더보드를 불러오지 못했습니다.</div>' : ''}
+                        ${FIREBASE_ENABLED ? '<div class="leaderboard-info">🔴 실시간 공유 리더보드 연결됨</div>' : ''}
+                        ${sharedLeaderboard.length === 0 ? '<div class="leaderboard-info">💡 공유 리더보드에 기록이 없거나 불러오지 못했습니다.</div>' : ''}
                         <button class="btn-secondary" onclick="document.getElementById('leaderboardModal').classList.remove('active')" style="width: 100%; margin-top: 20px;">닫기</button>
                     </div>
                 `;
 
                 leaderboardContent.innerHTML = html;
-                document.getElementById('leaderboardModal').classList.add('active');
             },
 
             generateLeaderboardTable(board, tabId, hidden = false) {
@@ -1669,10 +1774,10 @@
             },
 
             switchLeaderboardTab(tabId) {
+                this.leaderboardTab = tabId;
                 document.querySelectorAll('#leaderboardTableContainer table').forEach(t => t.style.display = 'none');
-                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('#leaderboardContent .tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
                 document.getElementById(`tab-${tabId}`).style.display = 'table';
-                event.target.classList.add('active');
             },
 
             async showEnding() {
@@ -1688,7 +1793,8 @@
                 localLeaderboard.push(newEntry);
                 localStorage.setItem('supercomLeaderboard', JSON.stringify(localLeaderboard));
 
-                // 공유 리더보드도 로드해서 순위 계산
+                // 공유(Firebase) 리더보드에 등록 후 순위 계산
+                await this.submitScore(newEntry);
                 sharedLeaderboard = await this.loadSharedLeaderboard();
                 const sortedBoard = this.mergeLeaderboards(localLeaderboard, sharedLeaderboard);
                 const myRank = sortedBoard.indexOf(newEntry) + 1;
