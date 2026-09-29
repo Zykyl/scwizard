@@ -1388,7 +1388,11 @@
                     const response = await fetch(url, { cache: 'no-store' });
                     if (response.ok) {
                         const data = await response.json();
-                        return Array.isArray(data) ? data.map(d => this.normalizeEntry(d)).filter(Boolean) : [];
+                        // 형식: 기록 배열 또는 { resetAt, entries } (GitHub Actions 초기화 버튼이 resetAt 기록)
+                        const entries = Array.isArray(data) ? data : (Array.isArray(data?.entries) ? data.entries : []);
+                        const resetAt = Date.parse(data?.resetAt) || 0;
+                        if (resetAt) this.applyReset(resetAt);
+                        return this.afterReset(entries.map(d => this.normalizeEntry(d)).filter(Boolean));
                     }
                 } catch (error) {
                     console.log('공유 리더보드 로드 실패:', error);

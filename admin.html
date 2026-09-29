@@ -172,13 +172,18 @@
 
         <!-- Firebase 미설정 안내 -->
         <div class="card hidden" id="notConfigured">
-            <h2>⚠️ Firebase가 설정되지 않았습니다</h2>
+            <h2>🧨 리더보드 초기화</h2>
             <p class="help">
-                공유 리더보드 초기화는 Firebase 연결 후 사용할 수 있습니다.
-                <code>firebase-config.js</code> 에 Firebase 설정값을 입력해주세요.<br>
-                지금은 공유 리더보드로 <code>leaderboard.json</code> 파일을 사용 중이며,
-                초기화하려면 저장소에서 이 파일 내용을 <code>[]</code> 로 바꿔 커밋하면 됩니다.
+                GitHub에서 버튼 한 번으로 초기화할 수 있습니다. (저장소 관리자만 실행 가능)<br>
+                1. 아래 버튼으로 GitHub Actions 페이지를 엽니다.<br>
+                2. <strong>Run workflow</strong> 를 누르고 확인 칸에 <code>초기화</code> 를 입력한 뒤 실행합니다.<br>
+                3. 1~5분 뒤 공유 기록이 비워지고, 각 플레이어 브라우저의 예전 기록도 다음 접속 시 자동으로 정리됩니다.
             </p>
+            <div class="row">
+                <a class="btn-primary" style="display: inline-block; padding: 12px 20px; border-radius: 10px; text-decoration: none; font-weight: bold;"
+                   href="https://github.com/Zykyl/scwizard/actions/workflows/reset-leaderboard.yml" target="_blank" rel="noopener">GitHub에서 초기화하기 ↗</a>
+            </div>
+            <p class="stat" id="jsonResetStat" style="margin-top: 12px;"></p>
         </div>
 
         <!-- 로그인 -->
@@ -316,6 +321,15 @@
         // ===== Firebase =====
         if (!ENABLED) {
             show('notConfigured');
+            // 마지막 초기화 시각 표시 (leaderboard.json 의 resetAt)
+            fetch('https://raw.githubusercontent.com/Zykyl/scwizard/main/leaderboard.json?t=' + Date.now(), { cache: 'no-store' })
+                .then(r => r.json())
+                .then(d => {
+                    const ms = Date.parse(d?.resetAt);
+                    const count = Array.isArray(d) ? d.length : (d?.entries?.length ?? 0);
+                    $('jsonResetStat').textContent = `현재 공유 기록 ${count}개` + (ms ? ` · 마지막 초기화: ${fmtDate(ms)}` : '');
+                })
+                .catch(() => {});
         } else {
             init().catch(e => {
                 show('loginCard');
