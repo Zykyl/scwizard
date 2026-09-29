@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>슈퍼컴 마법사 - 관리자</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 24px 16px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 760px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: #fff;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+        }
+
+        h1 {
+            color: #fff;
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 1.6em;
+        }
+
+        h2 {
+            font-size: 1.15em;
+            margin-bottom: 12px;
+            color: #444;
+        }
+
+        p.help {
+            color: #666;
+            font-size: 0.92em;
+            line-height: 1.6;
+            margin-bottom: 12px;
+        }
+
+        code {
+            background: #f1f3f9;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            word-break: break-all;
+        }
+
+        label {
+            display: block;
+            font-weight: bold;
+            font-size: 0.9em;
+            margin: 10px 0 6px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 10px;
+            font-size: 1em;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 16px;
+        }
+
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.95em;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; }
+        .btn-secondary { background: #e9ecef; color: #333; }
+        .btn-danger { background: #e53935; color: #fff; }
+        .btn-small { padding: 6px 12px; font-size: 0.85em; }
+
+        .status {
+            margin-top: 12px;
+            font-size: 0.92em;
+            min-height: 1.2em;
+        }
+
+        .status.error { color: #c62828; }
+        .status.ok { color: #2e7d32; }
+
+        .user-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .stat {
+            font-size: 0.95em;
+            color: #555;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.92em;
+        }
+
+        th, td {
+            padding: 10px 8px;
+            border-bottom: 1px solid #eee;
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        th {
+            background: #f5f6fb;
+            color: #555;
+        }
+
+        td.name {
+            white-space: normal;
+            word-break: break-all;
+        }
+
+        .danger-zone {
+            border: 2px solid #ffcdd2;
+        }
+
+        .hidden { display: none !important; }
+
+        a.back {
+            display: block;
+            text-align: center;
+            color: #fff;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🛠️ 슈퍼컴 마법사 관리자</h1>
+
+        <!-- Firebase 미설정 안내 -->
+        <div class="card hidden" id="notConfigured">
+            <h2>⚠️ Firebase가 설정되지 않았습니다</h2>
+            <p class="help">
+                공유 리더보드 초기화는 Firebase 연결 후 사용할 수 있습니다.
+                <code>firebase-config.js</code> 에 Firebase 설정값을 입력해주세요.<br>
+                지금은 공유 리더보드로 <code>leaderboard.json</code> 파일을 사용 중이며,
+                초기화하려면 저장소에서 이 파일 내용을 <code>[]</code> 로 바꿔 커밋하면 됩니다.
+            </p>
+        </div>
+
+        <!-- 로그인 -->
+        <div class="card hidden" id="loginCard">
+            <h2>🔐 관리자 로그인</h2>
+            <form id="loginForm">
+                <label for="email">이메일</label>
+                <input type="email" id="email" autocomplete="username" required>
+                <label for="password">비밀번호</label>
+                <input type="password" id="password" autocomplete="current-password" required>
+                <div class="row">
+                    <button type="submit" class="btn-primary" id="loginBtn">로그인</button>
+                </div>
+            </form>
+            <div class="status" id="loginStatus"></div>
+        </div>
+
+        <!-- 권한 없음 -->
+        <div class="card hidden" id="noAdminCard">
+            <h2>🚫 관리자 권한이 없습니다</h2>
+            <p class="help">
+                로그인한 계정의 UID: <code id="myUid"></code><br>
+                Firebase 콘솔 &gt; Firestore 에서 <code>admins</code> 컬렉션에
+                위 UID를 문서 ID로 하는 문서를 만들면 관리자로 등록됩니다.
+            </p>
+            <div class="row">
+                <button class="btn-secondary" id="logoutBtn2">로그아웃</button>
+            </div>
+        </div>
+
+        <!-- 관리자 화면 -->
+        <div id="adminPanel" class="hidden">
+            <div class="card">
+                <div class="user-bar">
+                    <div class="stat">👤 <strong id="adminEmail"></strong></div>
+                    <button class="btn-secondary btn-small" id="logoutBtn">로그아웃</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>🏆 공유 리더보드 기록</h2>
+                <p class="stat" id="entryStat">불러오는 중...</p>
+                <p class="stat" id="resetStat"></p>
+                <div class="table-wrap" style="margin-top: 12px;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>순위</th>
+                                <th>플레이어</th>
+                                <th>점수</th>
+                                <th>레벨</th>
+                                <th>시간</th>
+                                <th>등록</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="entryBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card danger-zone">
+                <h2>🧨 리더보드 초기화</h2>
+                <p class="help">
+                    공유 리더보드의 모든 기록을 삭제합니다. 되돌릴 수 없습니다.<br>
+                    각 플레이어 브라우저에 저장된 로컬 기록도 다음 접속 시 자동으로 정리됩니다.
+                </p>
+                <label for="confirmText">확인을 위해 <code>초기화</code> 를 입력하세요</label>
+                <input type="text" id="confirmText" autocomplete="off">
+                <div class="row">
+                    <button class="btn-danger" id="resetBtn" disabled>전체 리더보드 초기화</button>
+                </div>
+                <div class="status" id="resetStatus"></div>
+            </div>
+        </div>
+
+        <!-- 이 브라우저 로컬 기록 -->
+        <div class="card">
+            <h2>💻 이 브라우저의 로컬 기록</h2>
+            <p class="help">이 브라우저에만 저장된 게임 기록입니다. <span id="localCount"></span></p>
+            <div class="row">
+                <button class="btn-secondary" id="clearLocalBtn">로컬 기록 삭제</button>
+            </div>
+            <div class="status" id="localStatus"></div>
+        </div>
+
+        <a class="back" href="./">← 게임으로 돌아가기</a>
+    </div>
+
+    <script src="firebase-config.js"></script>
+    <script type="module">
+        const CONFIG = window.SCWIZARD_FIREBASE_CONFIG || {};
+        const ENABLED = Boolean(CONFIG.apiKey && CONFIG.projectId);
+        const SDK = 'https://www.gstatic.com/firebasejs/10.12.2';
+        const COLLECTION = 'leaderboard';
+        const META_DOC = ['meta', 'leaderboard'];
+        const LOCAL_KEY = 'supercomLeaderboard';
+
+        const $ = id => document.getElementById(id);
+        const show = (id, on = true) => $(id).classList.toggle('hidden', !on);
+        const setStatus = (id, msg, kind = '') => {
+            $(id).textContent = msg;
+            $(id).className = 'status' + (kind ? ' ' + kind : '');
+        };
+        const escapeHtml = str => String(str ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const fmtDate = ms => ms ? new Date(ms).toLocaleString('ko-KR') : '-';
+
+        // ===== 로컬 기록 =====
+        function readLocal() {
+            try {
+                const d = JSON.parse(localStorage.getItem(LOCAL_KEY));
+                return Array.isArray(d) ? d : [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function renderLocalCount() {
+            $('localCount').textContent = `(현재 ${readLocal().length}개)`;
+        }
+
+        $('clearLocalBtn').addEventListener('click', () => {
+            if (!confirm('이 브라우저의 로컬 기록을 모두 삭제할까요?')) return;
+            try {
+                localStorage.removeItem(LOCAL_KEY);
+                setStatus('localStatus', '✅ 로컬 기록을 삭제했습니다.', 'ok');
+            } catch (e) {
+                setStatus('localStatus', '로컬 기록 삭제 실패: ' + e.message, 'error');
+            }
+            renderLocalCount();
+        });
+
+        renderLocalCount();
+
+        // ===== Firebase =====
+        if (!ENABLED) {
+            show('notConfigured');
+        } else {
+            init().catch(e => {
+                show('loginCard');
+                setStatus('loginStatus', 'Firebase 초기화 실패: ' + e.message, 'error');
+            });
+        }
+
+        async function init() {
+            const [{ initializeApp }, auth, fs] = await Promise.all([
+                import(`${SDK}/firebase-app.js`),
+                import(`${SDK}/firebase-auth.js`),
+                import(`${SDK}/firebase-firestore.js`)
+            ]);
+            const app = initializeApp(CONFIG);
+            const authInst = auth.getAuth(app);
+            const db = fs.getFirestore(app);
+            let unsubs = [];
+
+            const logout = () => auth.signOut(authInst);
+            $('logoutBtn').addEventListener('click', logout);
+            $('logoutBtn2').addEventListener('click', logout);
+
+            $('loginForm').addEventListener('submit', async e => {
+                e.preventDefault();
+                $('loginBtn').disabled = true;
+                setStatus('loginStatus', '로그인 중...');
+                try {
+                    await auth.signInWithEmailAndPassword(authInst, $('email').value.trim(), $('password').value);
+                    $('password').value = '';
+                    setStatus('loginStatus', '');
+                } catch (err) {
+                    setStatus('loginStatus', '로그인 실패: 이메일 또는 비밀번호를 확인해주세요. (' + err.code + ')', 'error');
+                } finally {
+                    $('loginBtn').disabled = false;
+                }
+            });
+
+            auth.onAuthStateChanged(authInst, async user => {
+                unsubs.forEach(u => u());
+                unsubs = [];
+                show('loginCard', !user);
+                show('noAdminCard', false);
+                show('adminPanel', false);
+                if (!user) return;
+
+                // 관리자 등록 여부 확인
+                let isAdmin = false;
+                try {
+                    isAdmin = (await fs.getDoc(fs.doc(db, 'admins', user.uid))).exists();
+                } catch (err) {
+                    isAdmin = false;
+                }
+                if (!isAdmin) {
+                    $('myUid').textContent = user.uid;
+                    show('noAdminCard');
+                    return;
+                }
+
+                $('adminEmail').textContent = user.email || user.uid;
+                show('adminPanel');
+                unsubs.push(watchEntries(fs, db));
+                unsubs.push(fs.onSnapshot(fs.doc(db, ...META_DOC), snap => {
+                    const ms = snap.data()?.resetAt?.toMillis?.();
+                    $('resetStat').textContent = ms ? `마지막 초기화: ${fmtDate(ms)}` : '';
+                }));
+            });
+
+            $('confirmText').addEventListener('input', () => {
+                $('resetBtn').disabled = $('confirmText').value.trim() !== '초기화';
+            });
+
+            $('resetBtn').addEventListener('click', async () => {
+                if (!confirm('정말로 공유 리더보드의 모든 기록을 삭제할까요?\n이 작업은 되돌릴 수 없습니다.')) return;
+                $('resetBtn').disabled = true;
+                setStatus('resetStatus', '초기화 중...');
+                try {
+                    // 1) 초기화 시각 기록 → 모든 플레이어 화면과 로컬 기록에서 이전 기록이 사라짐
+                    await fs.setDoc(fs.doc(db, ...META_DOC), {
+                        resetAt: fs.serverTimestamp(),
+                        resetBy: authInst.currentUser?.email || authInst.currentUser?.uid || ''
+                    }, { merge: true });
+
+                    // 2) 공유 기록 문서 삭제 (한 번에 최대 500개씩)
+                    let deleted = 0;
+                    while (true) {
+                        const snap = await fs.getDocs(fs.query(fs.collection(db, COLLECTION), fs.limit(400)));
+                        if (snap.empty) break;
+                        const batch = fs.writeBatch(db);
+                        snap.docs.forEach(d => batch.delete(d.ref));
+                        await batch.commit();
+                        deleted += snap.size;
+                        setStatus('resetStatus', `삭제 중... (${deleted}개)`);
+                    }
+
+                    // 관리자 브라우저의 로컬 기록도 정리
+                    try { localStorage.removeItem(LOCAL_KEY); } catch (e) {}
+                    renderLocalCount();
+
+                    $('confirmText').value = '';
+                    setStatus('resetStatus', `✅ 초기화 완료! 공유 기록 ${deleted}개를 삭제했습니다.`, 'ok');
+                } catch (err) {
+                    setStatus('resetStatus', '초기화 실패: ' + (err.code || err.message) + ' (관리자 권한과 firestore.rules 배포 여부를 확인해주세요)', 'error');
+                    $('resetBtn').disabled = $('confirmText').value.trim() !== '초기화';
+                }
+            });
+
+            // 개별 기록 삭제 (부정 기록 정리용)
+            $('entryBody').addEventListener('click', async e => {
+                const btn = e.target.closest('[data-delete]');
+                if (!btn) return;
+                if (!confirm(`"${btn.dataset.name}" 님의 기록을 삭제할까요?`)) return;
+                btn.disabled = true;
+                try {
+                    await fs.deleteDoc(fs.doc(db, COLLECTION, btn.dataset.delete));
+                } catch (err) {
+                    alert('삭제 실패: ' + (err.code || err.message));
+                    btn.disabled = false;
+                }
+            });
+        }
+
+        function watchEntries(fs, db) {
+            const q = fs.query(fs.collection(db, COLLECTION), fs.orderBy('score', 'desc'));
+            return fs.onSnapshot(q, snap => {
+                $('entryStat').textContent = `총 ${snap.size}개 기록`;
+                if (snap.empty) {
+                    $('entryBody').innerHTML = '<tr><td colspan="7" style="text-align: center; color: #999;">기록이 없습니다.</td></tr>';
+                    return;
+                }
+                $('entryBody').innerHTML = snap.docs.map((d, i) => {
+                    const v = d.data();
+                    return `
+                        <tr>
+                            <td>${i + 1}</td>
+                            <td class="name">${escapeHtml(v.nickname)}</td>
+                            <td>${escapeHtml(v.score)}</td>
+                            <td>Lv.${escapeHtml(v.level)}</td>
+                            <td>${Math.round(Number(v.time) || 0)}초</td>
+                            <td>${fmtDate(v.createdAt?.toMillis?.())}</td>
+                            <td><button class="btn-danger btn-small" data-delete="${escapeHtml(d.id)}" data-name="${escapeHtml(v.nickname)}">삭제</button></td>
+                        </tr>
+                    `;
+                }).join('');
+            }, err => {
+                $('entryStat').textContent = '기록을 불러오지 못했습니다: ' + (err.code || err.message);
+            });
+        }
+    </script>
+</body>
+</html>

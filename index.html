@@ -909,6 +909,7 @@
         </div>
     </div>
 
+    <script src="firebase-config.js"></script>
     <script>
         // 설정: 공유 리더보드 JSON URL
         // github.com 페이지 주소가 아니라 raw.githubusercontent.com 의 원본(raw) 주소여야 JSON을 읽을 수 있습니다.
@@ -916,17 +917,11 @@
         const SHARED_LEADERBOARD_URL = 'https://raw.githubusercontent.com/Zykyl/scwizard/main/leaderboard.json';
 
         // 설정: Firebase 실시간 공유 리더보드 (Cloud Firestore)
-        // Firebase 콘솔 > 프로젝트 설정 > 내 앱(웹) 에서 firebaseConfig 값을 복사해 넣으세요.
-        // 이 값은 공개되어도 되는 값이며, 쓰기 권한은 firestore.rules 보안 규칙으로 제한합니다.
-        const FIREBASE_CONFIG = {
-            apiKey: '',
-            authDomain: '',
-            projectId: '',
-            storageBucket: '',
-            messagingSenderId: '',
-            appId: ''
-        };
+        // 설정값은 firebase-config.js 파일에 입력하세요. (관리자 페이지와 공유)
+        const FIREBASE_CONFIG = window.SCWIZARD_FIREBASE_CONFIG || {};
         const FIREBASE_COLLECTION = 'leaderboard';
+        const FIREBASE_META_DOC = ['meta', 'leaderboard']; // 관리자 초기화 시각(resetAt) 저장 위치
+        let leaderboardResetAt = 0; // 이 시각 이전 기록은 초기화된 것으로 보고 숨김
         const FIREBASE_SDK_VERSION = '10.12.2';
         const FIREBASE_ENABLED = Boolean(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId);
 
@@ -1329,8 +1324,26 @@
                     score: d.score,
                     level: Number(d.level) || 1,
                     time: Number(d.time) || 0,
-                    date: String(d.date ?? '')
+                    date: String(d.date ?? ''),
+                    // 등록 시각: Firestore 서버 시각 (등록 직후 아직 없으면 지금 시각)
+                    ts: d.createdAt?.toMillis?.() ?? (Number(d.ts) || Date.now())
                 };
+            },
+
+            // 관리자 초기화 이후 기록만 남기기
+            afterReset(board) {
+                return leaderboardResetAt ? board.filter(p => (p.ts || 0) >= leaderboardResetAt) : board;
+            },
+
+            // 관리자가 리더보드를 초기화하면 이 브라우저의 로컬 기록도 함께 정리
+            applyReset(resetAt) {
+                leaderboardResetAt = resetAt || 0;
+                const kept = this.afterReset(localLeaderboard);
+                if (kept.length !== localLeaderboard.length) {
+                    localLeaderboard = kept;
+                    try { localStorage.setItem('supercomLeaderboard', JSON.stringify(localLeaderboard)); } catch (e) {}
+                }
+                sharedLeaderboard = this.afterReset(sharedLeaderboard);
             },
 
             // 실시간 리더보드 구독: 누가 기록을 올리면 즉시 화면이 갱신됨
@@ -1338,9 +1351,15 @@
                 if (this.liveReady) return this.liveReady;
                 this.liveReady = new Promise(resolve => {
                     this.initFirebase().then(({ db, fs }) => {
+                        // 관리자 초기화 시각 구독
+                        fs.onSnapshot(fs.doc(db, ...FIREBASE_META_DOC), snap => {
+                            this.applyReset(snap.data()?.resetAt?.toMillis?.() || 0);
+                            this.refreshLeaderboardViews();
+                        }, error => console.log('리더보드 설정 구독 실패:', error));
+
                         const q = fs.query(fs.collection(db, FIREBASE_COLLECTION), fs.orderBy('score', 'desc'), fs.limit(100));
                         fs.onSnapshot(q, snap => {
-                            sharedLeaderboard = snap.docs.map(doc => this.normalizeEntry(doc.data())).filter(Boolean);
+                            sharedLeaderboard = this.afterReset(snap.docs.map(doc => this.normalizeEntry(doc.data())).filter(Boolean));
                             this.refreshLeaderboardViews();
                             resolve();
                         }, error => {
@@ -1510,19 +1529,14 @@
             showQuiz(challenge, container) {
                 const data = challenge.data;
                 window.currentQuizChallenge = challenge;
-                window.currentQuizOptions = data.options;
+                window.currentQuizOptions = [];
+                window.selectedQuizAnswer = undefined;
 
                 const html = `
                     <div class="modal-title">${challenge.name}</div>
                     <div class="quiz-container">
                         <div class="quiz-question">${data.question}</div>
-                        <div class="quiz-options" id="quizOptions">
-                            ${data.options.map((opt, idx) => `
-                                <div class="quiz-option" onclick="game.selectAnswer(${idx})" data-index="${idx}">
-                                    <span>${opt.emoji}</span> ${opt.text}
-                                </div>
-                            `).join('')}
-                        </div>
+                        <div class="quiz-options" id="quizOptions"></div>
                     </div>
                     <div class="button-group">
                         <button class="btn-primary" onclick="game.submitQuiz()">
@@ -1532,6 +1546,24 @@
                     </div>
                 `;
                 container.innerHTML = html;
+                this.renderQuizOptions();
+            },
+
+            // 보기 순서를 섞어서 표시 (위치를 외워서 푸는 것 방지)
+            renderQuizOptions() {
+                const challenge = window.currentQuizChallenge;
+                const box = document.getElementById('quizOptions');
+                if (!challenge || !box) return;
+
+                const options = this.shuffleDifferent(challenge.data.options, window.currentQuizOptions);
+                window.currentQuizOptions = options;
+                window.selectedQuizAnswer = undefined;
+
+                box.innerHTML = options.map((opt, idx) => `
+                    <div class="quiz-option" onclick="game.selectAnswer(${idx})" data-index="${idx}">
+                        <span>${opt.emoji}</span> ${opt.text}
+                    </div>
+                `).join('');
             },
 
             selectAnswer(idx) {
@@ -1559,7 +1591,8 @@
                     const penalty = Math.floor(challenge.penalty * gameState.attempts[challenge.id] * 0.5);
                     gameState.energy = Math.max(0, gameState.energy - penalty);
                     this.updateUI();
-                    alert(`❌ 틀렸어요! -${penalty} 에너지 손실\n다시 시도해보세요! (${gameState.attempts[challenge.id]}회 시도)`);
+                    alert(`❌ 틀렸어요! -${penalty} 에너지 손실\n보기 순서가 바뀌었어요. 다시 시도해보세요! (${gameState.attempts[challenge.id]}회 시도)`);
+                    this.renderQuizOptions();
                 }
             },
 
@@ -1573,10 +1606,21 @@
                 return shuffled;
             },
 
+            // 이전 순서(avoid)와 다른 순서가 나오도록 섞기 (보기가 2개 이상일 때)
+            shuffleDifferent(array, avoid) {
+                const same = (a, b) => b && a.length === b.length && a.every((v, i) => v === b[i]);
+                let shuffled = this.shuffleArray(array);
+                for (let tries = 0; tries < 10 && array.length > 1 && same(shuffled, avoid); tries++) {
+                    shuffled = this.shuffleArray(array);
+                }
+                return shuffled;
+            },
+
             showSequence(challenge, container) {
                 const data = challenge.data;
                 // 정답 선택지를 매번 섞기
-                const shuffledItems = this.shuffleArray(data.items);
+                // 처음부터 정답 순서로 나오지 않도록 섞기
+                const shuffledItems = this.shuffleDifferent(data.items, data.items);
                 window.currentSequenceChallenge = challenge;
                 window.originalSequenceOrder = data.items;
 
@@ -1906,7 +1950,8 @@
                     score: gameState.totalPoints,
                     level: gameState.level,
                     time: totalTime,
-                    date: new Date().toLocaleString('ko-KR')
+                    date: new Date().toLocaleString('ko-KR'),
+                    ts: Date.now()
                 };
 
                 localLeaderboard.push(newEntry);

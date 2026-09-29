@@ -1,7 +1,13 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 공유 리더보드: 누구나 읽기 가능, 새 기록 등록만 허용 (수정/삭제 불가)
+    // 관리자: Firebase 콘솔에서 admins/{관리자 UID} 문서를 직접 만들어 등록합니다.
+    function isAdmin() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // 공유 리더보드: 누구나 읽기 가능, 새 기록 등록만 허용 / 삭제는 관리자만
     match /leaderboard/{entryId} {
       allow read: if true;
       allow create: if request.resource.data.keys().hasOnly(['nickname', 'score', 'level', 'time', 'date', 'createdAt'])
@@ -19,7 +25,20 @@ service cloud.firestore {
         && request.resource.data.date is string
         && request.resource.data.date.size() <= 40
         && request.resource.data.createdAt == request.time;
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // 리더보드 설정 (관리자 초기화 시각 resetAt): 누구나 읽기, 관리자만 쓰기
+    match /meta/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 관리자 목록: 본인 문서만 읽기(권한 확인용), 쓰기는 콘솔에서만
+    match /admins/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
     }
   }
 }
