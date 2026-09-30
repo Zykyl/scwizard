@@ -170,14 +170,19 @@
     <div class="container">
         <h1>🛠️ 슈퍼컴 마법사 관리자</h1>
 
-        <!-- Firebase 미설정 안내 -->
-        <div class="card hidden" id="notConfigured">
+        <!-- GitHub 버튼으로 초기화 (로그인 불필요) -->
+        <div class="card" id="githubResetCard">
             <h2>🧨 리더보드 초기화</h2>
             <p class="help">
                 GitHub에서 버튼 한 번으로 초기화할 수 있습니다. (저장소 관리자만 실행 가능)<br>
                 1. 아래 버튼으로 GitHub Actions 페이지를 엽니다.<br>
                 2. <strong>Run workflow</strong> 를 누르고 확인 칸에 <code>초기화</code> 를 입력한 뒤 실행합니다.<br>
-                3. 1~5분 뒤 공유 기록이 비워지고, 각 플레이어 브라우저의 예전 기록도 다음 접속 시 자동으로 정리됩니다.
+                3. 1~2분 뒤 공유 기록이 모두 지워지고, 각 플레이어 브라우저의 예전 기록도 다음 접속 시 자동으로 정리됩니다.
+            </p>
+            <p class="help hidden" id="secretHelp">
+                ℹ️ Firebase 기록을 지우려면 처음 한 번 <strong>Firebase 서비스 계정 키</strong>를 GitHub에
+                <code>FIREBASE_SERVICE_ACCOUNT</code> 이름으로 등록해야 합니다.
+                (Firebase 콘솔 &gt; 프로젝트 설정 &gt; 서비스 계정 &gt; 새 비공개 키 생성 → 저장소 Settings &gt; Secrets and variables &gt; Actions)
             </p>
             <div class="row">
                 <a class="btn-primary" style="display: inline-block; padding: 12px 20px; border-radius: 10px; text-decoration: none; font-weight: bold;"
@@ -188,7 +193,8 @@
 
         <!-- 로그인 -->
         <div class="card hidden" id="loginCard">
-            <h2>🔐 관리자 로그인</h2>
+            <h2>🔐 관리자 로그인 (선택)</h2>
+            <p class="help">기록을 한 줄씩 삭제하거나 이 페이지에서 바로 초기화하려면 Firebase 관리자 계정으로 로그인하세요.</p>
             <form id="loginForm">
                 <label for="email">이메일</label>
                 <input type="email" id="email" autocomplete="username" required>
@@ -320,7 +326,6 @@
 
         // ===== Firebase =====
         if (!ENABLED) {
-            show('notConfigured');
             // 마지막 초기화 시각 표시 (leaderboard.json 의 resetAt)
             fetch('https://raw.githubusercontent.com/Zykyl/scwizard/main/leaderboard.json?t=' + Date.now(), { cache: 'no-store' })
                 .then(r => r.json())
@@ -331,10 +336,26 @@
                 })
                 .catch(() => {});
         } else {
+            show('secretHelp');
+            showFirebaseResetStat();
             init().catch(e => {
                 show('loginCard');
                 setStatus('loginStatus', 'Firebase 초기화 실패: ' + e.message, 'error');
             });
+        }
+
+        // 마지막 초기화 시각 표시 (Firestore meta/leaderboard, 로그인 불필요)
+        async function showFirebaseResetStat() {
+            try {
+                const url = `https://firestore.googleapis.com/v1/projects/${CONFIG.projectId}/databases/(default)/documents/meta/leaderboard?key=${CONFIG.apiKey}`;
+                const r = await fetch(url, { cache: 'no-store' });
+                if (!r.ok) {
+                    $('jsonResetStat').textContent = '아직 초기화한 기록이 없습니다.';
+                    return;
+                }
+                const ms = Date.parse((await r.json())?.fields?.resetAt?.timestampValue);
+                $('jsonResetStat').textContent = ms ? `마지막 초기화: ${fmtDate(ms)}` : '';
+            } catch (e) {}
         }
 
         async function init() {
