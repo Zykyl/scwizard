@@ -1,6 +1,10 @@
 # 리더보드 초기화 버튼
 # GitHub 저장소 > Actions > "리더보드 초기화" > Run workflow 를 누르면 실행됩니다.
 # 저장소 쓰기 권한이 있는 사람만 실행할 수 있습니다.
+#
+# - leaderboard.json (Firebase 미사용 시 공유 기록) 초기화
+# - Firebase 사용 시: Firestore 공유 기록 전체 삭제 + 초기화 시각 기록
+#   (저장소 Settings > Secrets and variables > Actions 에 FIREBASE_SERVICE_ACCOUNT 등록 필요)
 name: 리더보드 초기화
 
 on:
@@ -29,6 +33,26 @@ jobs:
           exit 1
 
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Firebase 공유 기록 초기화
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          # firebase-config.js 에 projectId 가 있으면 Firebase 사용 중
+          if ! grep -Eq "projectId: *'[^']+'" firebase-config.js; then
+            echo "Firebase 미사용 - 건너뜀"
+            exit 0
+          fi
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo '::error::FIREBASE_SERVICE_ACCOUNT 비밀값이 없습니다. Firebase 서비스 계정 키를 저장소 Settings > Secrets and variables > Actions 에 등록해주세요.'
+            exit 1
+          fi
+          npm install --no-save --no-audit --no-fund firebase-admin@12
+          node scripts/reset-firestore.mjs
 
       - name: leaderboard.json 초기화
         run: |
