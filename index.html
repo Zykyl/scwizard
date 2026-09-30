@@ -920,6 +920,7 @@
         // 설정값은 firebase-config.js 파일에 입력하세요. (관리자 페이지와 공유)
         const FIREBASE_CONFIG = window.SCWIZARD_FIREBASE_CONFIG || {};
         const FIREBASE_COLLECTION = 'leaderboard';
+        const FIREBASE_READ_LIMIT = 20; // 접속당 읽는 상위 기록 수 (무료 사용량 절약, 화면에는 상위 10개 표시)
         const FIREBASE_META_DOC = ['meta', 'leaderboard']; // 관리자 초기화 시각(resetAt) 저장 위치
         let leaderboardResetAt = 0; // 이 시각 이전 기록은 초기화된 것으로 보고 숨김
         const FIREBASE_SDK_VERSION = '10.12.2';
@@ -1357,7 +1358,7 @@
                             this.refreshLeaderboardViews();
                         }, error => console.log('리더보드 설정 구독 실패:', error));
 
-                        const q = fs.query(fs.collection(db, FIREBASE_COLLECTION), fs.orderBy('score', 'desc'), fs.limit(100));
+                        const q = fs.query(fs.collection(db, FIREBASE_COLLECTION), fs.orderBy('score', 'desc'), fs.limit(FIREBASE_READ_LIMIT));
                         fs.onSnapshot(q, snap => {
                             sharedLeaderboard = this.afterReset(snap.docs.map(doc => this.normalizeEntry(doc.data())).filter(Boolean));
                             this.refreshLeaderboardViews();
@@ -1966,6 +1967,8 @@
                 sharedLeaderboard = await this.loadSharedLeaderboard();
                 const sortedBoard = this.mergeLeaderboards(localLeaderboard, sharedLeaderboard);
                 const myRank = sortedBoard.indexOf(newEntry) + 1;
+                // Firebase는 상위 기록만 읽으므로 그 밖의 순위는 정확히 알 수 없음
+                const rankText = FIREBASE_ENABLED && myRank > FIREBASE_READ_LIMIT ? `상위 ${FIREBASE_READ_LIMIT}위 밖` : `${myRank}위`;
 
                 const endingContent = `
                     <div class="ending-screen">
@@ -1994,7 +1997,7 @@
                         </div>
 
                         <div class="result-reward">
-                            최종 점수: ${gameState.totalPoints} | 레벨: ${gameState.level} | 순위: ${myRank}위
+                            최종 점수: ${gameState.totalPoints} | 레벨: ${gameState.level} | 순위: ${rankText}
                         </div>
 
                         <div class="info-box">
